@@ -1621,9 +1621,10 @@ function MessageRowContent({
           </div>
           {!reactionsInBubble && reactionContent}
           <DeliveryNotice row={row} retry={retry} />
-          {session && (
+          {session && scope && (
             <AgentDeclineNotes
               session={session}
+              scope={scope}
               channelId={row.channelId}
               messageId={row.id}
             />
