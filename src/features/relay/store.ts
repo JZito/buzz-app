@@ -1306,8 +1306,23 @@ export function createChannelStore(
         // cached verification symbol. Reconstruct only wire fields before verification.
         const verifySaved = (value: unknown) =>
           eventDto(JSON.parse(JSON.stringify(value)));
-        const events: RelayEvent[] = [];
-        for (let index = 0; index < record.events.length; index += 8) {
+        // The host still validates every event; unavailable hosts use the JS path.
+        const nativeEvents = await transport
+          .verifyStored?.(record.events)
+          .catch(() => {});
+        if (
+          disposed ||
+          generation !== epoch ||
+          accessVersion !== (accessVersions.get(record.channelId) ?? 0) ||
+          !allowed?.has(record.channelId)
+        )
+          return;
+        const events: RelayEvent[] = nativeEvents ?? [];
+        for (
+          let index = 0;
+          !nativeEvents && index < record.events.length;
+          index += 8
+        ) {
           const started = performance.now();
           const batch = record.events.slice(index, index + 8).map(verifySaved);
           clientMetrics.cpu(
@@ -1349,19 +1364,35 @@ export function createChannelStore(
           cached: true,
           restored: true,
         };
-        const verifiedProfiles: RelayEvent[] = [];
-        for (let index = 0; index < record.profiles.length; index += 8) {
-          for (const value of record.profiles.slice(index, index + 8)) {
-            const candidate = value as { pubkey?: string; id?: string };
-            const existing =
-              candidate?.pubkey && directory.event(candidate.pubkey);
-            // Reuse an already verified object, never the raw record that merely claims its ID.
-            verifiedProfiles.push(
-              existing && existing.id === candidate.id
-                ? existing
-                : verifySaved(value),
-            );
-          }
+        const reusedProfile = (value: unknown) => {
+          const candidate = value as { pubkey?: string; id?: string };
+          const existing =
+            candidate?.pubkey && directory.event(candidate.pubkey);
+          // Reuse the verified object, never raw bytes that merely claim its ID.
+          return existing && existing.id === candidate.id
+            ? existing
+            : undefined;
+        };
+        const nativeProfiles = await transport
+          .verifyStored?.(
+            record.profiles.map((value) => reusedProfile(value) ?? value),
+          )
+          .catch(() => {});
+        if (
+          disposed ||
+          generation !== epoch ||
+          accessVersion !== (accessVersions.get(record.channelId) ?? 0) ||
+          !allowed?.has(record.channelId)
+        )
+          return;
+        const verifiedProfiles: RelayEvent[] = nativeProfiles ?? [];
+        for (
+          let index = 0;
+          !nativeProfiles && index < record.profiles.length;
+          index += 8
+        ) {
+          for (const value of record.profiles.slice(index, index + 8))
+            verifiedProfiles.push(reusedProfile(value) ?? verifySaved(value));
           await yieldToHost();
           if (
             disposed ||
@@ -1497,8 +1528,16 @@ export function createChannelStore(
         byteSize(saved) > 8 * 1024 * 1024
       )
         return;
-      const events: RelayEvent[] = [];
-      for (let index = 0; index < saved.events.length; index += 12) {
+      const nativeEvents = await transport
+        .verifyStored?.(saved.events)
+        .catch(() => {});
+      if (disposed || generation !== epoch || discoveryObserved) return;
+      const events: RelayEvent[] = nativeEvents ?? [];
+      for (
+        let index = 0;
+        !nativeEvents && index < saved.events.length;
+        index += 12
+      ) {
         events.push(
           ...saved.events
             .slice(index, index + 12)
